@@ -115,9 +115,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $zip = "FluentFlyout_${env:APP_VERSION}_x64.zip"
+          $relName = gh api "repos/$env:UPSTREAM_REPO/releases/latest" --jq '.name'
+          $relBody = gh api "repos/$env:UPSTREAM_REPO/releases/latest" --jq '.body'
+          [System.IO.File]::WriteAllText("$env:GITHUB_WORKSPACE\body.md", $relBody, [System.Text.UTF8Encoding]::new($false))
           gh release view "$env:TAG" --json id 2>$null | Out-Null
           if ($LASTEXITCODE -ne 0) {
-            gh release create "$env:TAG" $zip --title "FluentFlyout $env:APP_VERSION" --notes "Auto-built from upstream release $env:TAG"
+            gh release create "$env:TAG" $zip --title "$relName" --notes-file "$env:GITHUB_WORKSPACE\body.md"
           } else {
             gh release upload "$env:TAG" $zip --clobber
+            gh release edit "$env:TAG" --title "$relName" --notes-file "$env:GITHUB_WORKSPACE\body.md"
           }
