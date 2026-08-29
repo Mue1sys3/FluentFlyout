@@ -48,7 +48,7 @@ jobs:
     if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Merge upstream release code
@@ -75,7 +75,7 @@ jobs:
       PLATFORM: x64
       TAG: ${{ needs.check.outputs.upstream_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: microsoft/setup-msbuild@v3
 
@@ -87,6 +87,12 @@ jobs:
           [xml]$manifest = Get-Content 'FluentFlyoutMSIX\Package.appxmanifest'
           $fullVersion = $manifest.Package.Identity.Version
           echo "APP_VERSION=$fullVersion" >> $env:GITHUB_ENV
+
+      - name: Derive release version from tag
+        shell: bash
+        run: |
+          REL_VER="${TAG#v}"
+          echo "REL_VER=${REL_VER}" >> "$GITHUB_ENV"
 
       - name: Build & package MSIX (unsigned)
         run: |
@@ -108,20 +114,25 @@ jobs:
           Copy-Item ".github\build-files\README.txt" "$outDir\"
 
       - name: Create ZIP
-        run: Compress-Archive -Path "$env:GITHUB_WORKSPACE\InstallerOutput\*" -DestinationPath "$env:GITHUB_WORKSPACE\FluentFlyout_${env:APP_VERSION}_x64.zip"
+        run: Compress-Archive -Path "$env:GITHUB_WORKSPACE\InstallerOutput\*" -DestinationPath "$env:GITHUB_WORKSPACE\FluentFlyout_${env:REL_VER}_x64.zip"
 
       - name: Publish release (create or update)
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $zip = "FluentFlyout_${env:APP_VERSION}_x64.zip"
-          $relName = gh api "repos/$env:UPSTREAM_REPO/releases/latest" --jq '.name'
-          $relBody = gh api "repos/$env:UPSTREAM_REPO/releases/latest" --jq '.body'
-          [System.IO.File]::WriteAllText("$env:GITHUB_WORKSPACE\body.md", $relBody, [System.Text.UTF8Encoding]::new($false))
-          gh release view "$env:TAG" --json id 2>$null | Out-Null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create "$env:TAG" $zip --title "$relName" --notes-file "$env:GITHUB_WORKSPACE\body.md"
-          } else {
-            gh release upload "$env:TAG" $zip --clobber
-            gh release edit "$env:TAG" --title "$relName" --notes-file "$env:GITHUB_WORKSPACE\body.md"
-          }
+          set -e
+          ZIP="FluentFlyout_${REL_VER}_x64.zip"
+          REL_NAME=$(gh api "repos/${UPSTREAM_REPO}/releases/latest" --jq '.name')
+          gh api "repos/${UPSTREAM_REPO}/releases/latest" --jq '.body' > body.md
+          if gh release view "${TAG}" --json id >/dev/null 2>&1; then
+            gh release view "${TAG}" --json assets --jq '.assets[].name' | while read -r A; do
+              case "${A}" in
+                FluentFlyout_*.zip) gh release delete-asset "${TAG}" "${A}" --yes ;;
+              esac
+            done
+            gh release upload "${TAG}" "${ZIP}" --clobber
+            gh release edit "${TAG}" --title "${REL_NAME}" --notes-file body.md
+          else
+            gh release create "${TAG}" "${ZIP}" --title "${REL_NAME}" --notes-file body.md
+          fi
