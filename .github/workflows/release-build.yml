@@ -35,7 +35,11 @@ jobs:
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             echo "Manual dispatch: force build for ${TAG}"
-          elif gh release view "${TAG}" --json id >/dev/null 2>&1; then
+          # 用显式 API 而非 `gh release view`：本 job 没有 checkout，gh 无法解析默认仓库
+          # （gh 依赖 git remote 或 GH_REPO 环境变量），会导致每次都误判"新 release"。
+          # GITHUB_REPOSITORY 是 Actions 内置变量（即当前 fork），显式指定语义明确：
+          # 200 = 该 tag 的 release 已存在（跳过构建），404 = 未构建过（触发构建）。
+          elif gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.id' >/dev/null 2>&1; then
             echo "should_build=false" >> "$GITHUB_OUTPUT"
             echo "Release ${TAG} already published here, skip"
           else
