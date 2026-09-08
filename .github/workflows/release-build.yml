@@ -64,7 +64,24 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
           git fetch upstream "refs/tags/${TAG}:refs/tags/upstream-${TAG}"
-          git merge --no-edit "upstream-${TAG}"
+          # --no-commit 隐含 --no-ff：merge 停在暂存态而非直接提交，
+          # 便于下一步排除 .github/workflows 的上游变更后再统一提交
+          git merge --no-commit --no-edit "upstream-${TAG}" || {
+            echo "::error::Merge conflicts detected. Resolve manually on your fork."
+            git merge --abort
+            exit 1
+          }
+          # GITHUB_TOKEN 没有 workflows 权限：推送任何创建/更新 .github/workflows
+          # 文件的 commit 都会被 GitHub 拒绝（remote rejected: refusing to allow
+          # a GitHub App to create or update workflow ... without `workflows`
+          # permission）。上游偶尔会改自己的 workflow（如 v2.15.0 改了 stale.yml），
+          # 故将 .github/workflows 恢复为 fork 自有版本（HEAD，含本 release-build.yml
+          # 及已禁用的上游 workflow），该目录不跟随上游同步。
+          git restore --source=HEAD --staged --worktree .github/workflows
+          # merge 若为 already up to date 则无 MERGE_HEAD，无需提交
+          if [ -f .git/MERGE_HEAD ]; then
+            git commit --no-edit
+          fi
           git tag -f "${TAG}" HEAD
           git push --force origin "refs/tags/${TAG}"
           git push origin master
